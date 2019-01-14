@@ -262,24 +262,38 @@ def exitApp():
     pygame.quit()
     sys.exit()
 
-def getImageTrans(img):
-    class ImageTransPainter(thorpy.painters.painter.Painter):
-        def __init__(self, _img, size=None, clip=None, pressed=False, hovered=False,):
-            super(ImageTransPainter, self).__init__((img.size[0] + 2, img.size[1] + 2), clip, pressed, hovered)
-            self.img = _img
-            self.w, self.h = img.size[0], img.size[1]
+class ImageTransPainter(thorpy.painters.painter.Painter):
+    def __init__(self, _img, size=None, clip=None, pressed=False, hovered=False,):
+        super(ImageTransPainter, self).__init__((_img.size[0] + 2, _img.size[1] + 2), clip, pressed, hovered)
+        self.img = _img
+        self.w, self.h = _img.size[0], _img.size[1]
 
-        def get_surface(self):
-            surface = pygame.Surface(self.size, flags=pygame.SRCALPHA).convert_alpha()
-            _img = imgPySurf(self.img)
-            pygame.draw.rect(surface, (0,)*3, (0, 0, self.w + 2, self.h + 2), 1)
-            surface.blit(_img, (1, 1))
-            surface.set_clip(self.clip)
-            return surface
-    painter = ImageTransPainter(img)
+    def get_surface(self):
+        surface = pygame.Surface(self.size, flags=pygame.SRCALPHA).convert_alpha()
+        _img = imgPySurf(self.img)
+        pygame.draw.rect(surface, (0,)*3, (0, 0, self.w + 2, self.h + 2), 1)
+        surface.blit(_img, (1, 1))
+        surface.set_clip(self.clip)
+        return surface
+    
+    def swapImg(self, img):
+        self.set_size((img.size[0] + 2, img.size[1] + 2))
+        self.img = img
+        self.w, self.h = img.size[0], img.size[1]
+        self.refresh_clip()
+
+def getImageTrans(img):
     container = thorpy.Element()
-    container.set_painter(painter)
+    container.set_painter(ImageTransPainter(img))
     container.finish()
+    return container
+
+def swapImageTrans(container, img):
+    container.change_painter(ImageTransPainter(img))
+    #thorpy.store(background, [inserter, runBtn, imgBox1, imgBox2])
+    container.total_unblit()
+    container.blit()
+    container.total_update()
     return container
 
 def adjustImgSize(img, targetSize):
@@ -288,25 +302,52 @@ def adjustImgSize(img, targetSize):
     else:
         return img.resize((int(targetSize*img.size[0]/img.size[1]), int(targetSize)))
 
-def getImgShow(img, targetSize, label, desc):
+def showImg(img, targetSize, label, desc):
     img = adjustImgSize(img, targetSize)
     labelObj = thorpy.OneLineText.make(label)
     imgBox = getImageTrans(img)
     descObj = thorpy.OneLineText.make(desc)
     box = thorpy.make_ok_box([labelObj, imgBox, descObj])
-    options = thorpy.make_button(label)
+    
+    launcher = thorpy.Launcher(box)
+    react = thorpy.ConstantReaction(thorpy.constants.THORPY_EVENT,
+            launcher.unlaunch,
+            {'id':thorpy.constants.EVENT_DONE, 'el':box},
+            {'what':thorpy.constants.LAUNCH_DONE})
+    box.add_reaction(react)
+    launcher.launch()
 
-    thorpy.set_launcher(options, box)
-    return options
+def showImgBtn(targetSize, label, desc):
+    global imgTable
+    imgTable[label] = imgNone
+    
+    def reactFn(elem):
+        x, y = pygame.mouse.get_pos()
+        rect = elem.get_rect()
+        if rect.left < x < rect.right and rect.top < y < rect.bottom:
+            print('reaction!')
+            showImg(imgTable[label], targetSize, label, desc)
+
+    launchBtn = thorpy.Pressable.make(text=label)
+    react = thorpy.ConstantReaction(reacts_to=pygame.MOUSEBUTTONDOWN, reac_func=reactFn, params={'elem':launchBtn})
+    launchBtn.add_reaction(react)
+
+    return launchBtn
 
 def keyEvent(event):
+    global isA, isB, isC, runBtn
     if event.key in (pygame.K_KP_ENTER, pygame.K_RETURN):
         processImg()
     elif event.key == pygame.K_ESCAPE:
         exitApp()
-    elif event.key == pygame.K_SPACE:
-        print('SPACE')
+    elif event.key == pygame.K_n:
+        img = loadImage('http://www.thorpy.org/images/thorpy.png')
+        if isC:
+            img = adjustImgSize(imgNone, 300)
+        isC = not isC
+        showImg(img, 300, 'Test Image', 'Test Image description')
 
+imgTable = dict()
 
 reaction = thorpy.Reaction(reacts_to=pygame.KEYDOWN, reac_func=keyEvent)
 
@@ -314,25 +355,29 @@ app = thorpy.Application(size=SIZE, caption=CAPTION)
 
 inserter = thorpy.Inserter.make(name='Image URL :', value='URL HERE', size=INSERTER_SIZE)
 
-runBtn = thorpy.Clickable.make(text='Run')
+runBtn = thorpy.make_button('Run')
 
 imgNone = Image.open('noImg.png')
 
-showOriginal = getImgShow(imgNone, imgSize, 'Original', 'The original image.')
-showGray = getImgShow(imgNone, imgSize, 'Grayscale', 'Black and white version.')
-showGauss = getImgShow(imgNone, imgSize, 'Gaussian Blur', 'Guassian blur filter applied.')
-showNorms = getImgShow(imgNone, imgSize, 'Gradient Norms', 'Norm of gradients applied.')
-showNonMax1 = getImgShow(imgNone, imgSize, 'Non-maximum Suppression', 'Desc. here.')
-showNonMax2 = getImgShow(imgNone, imgSize, 'Non-maximum Suppression over Norms', 'Desc. here.')
-showThresh = getImgShow(imgNone, imgSize, 'Double Threshold', 'Desc. here.')
-showHysteresis = getImgShow(imgNone, imgSize, 'Hysteresis [FINAL VERSION]', 'Desc. here.')
+imgBox1 = getImageTrans(adjustImgSize(imgNone, 300))
+imgBox2 = getImageTrans(adjustImgSize(imgNone, 300))
+
+showOriginal = showImgBtn(imgSize, 'Original', 'The original image.')
+showGray = showImgBtn(imgSize, 'Grayscale', 'Black and white version.')
+showGauss = showImgBtn(imgSize, 'Gaussian Blur', 'Guassian blur filter applied.')
+showNorms = showImgBtn(imgSize, 'Gradient Norms', 'Norm of gradients applied.')
+showNonMax1 = showImgBtn(imgSize, 'Non-maximum Suppression', 'Desc. here.')
+showNonMax2 = showImgBtn(imgSize, 'Non-maximum Suppression over Norms', 'Desc. here.')
+showThresh = showImgBtn(imgSize, 'Double Threshold', 'Desc. here.')
+showHysteresis = showImgBtn(imgSize, 'Hysteresis [FINAL VERSION]', 'Desc. here.')
+
+def processImage(img):
+    pass
 
 background = thorpy.Background.make((255,)*3, elements=[inserter, runBtn, showOriginal, showGray, showGauss, showNorms, showNonMax1, showNonMax2, showThresh, showHysteresis])
-
 thorpy.store(background, [inserter, runBtn, showOriginal, showGray, showGauss, showNorms, showNonMax1, showNonMax2, showThresh, showHysteresis])
 
 background.add_reaction(reaction)
-background.finish()
 
 thorpy.Menu(background).play()
 app.quit()
