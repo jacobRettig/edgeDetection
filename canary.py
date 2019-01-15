@@ -1,12 +1,12 @@
-import thorpy, pygame, sys, requests, io
-from PIL import Image, ImageMath, ImageOps
+import thorpy, pygame, sys, requests, io, clipboard
+from PIL import Image, ImageMath, ImageOps, ImageChops
 from math import erf, sqrt, cos, sin, pi
 
 TAU = 2*pi
 
-SIZE = (500, 500)
+SIZE = (800, 800)
 CAPTION = 'Canary Edge Detection Mockup'
-INSERTER_SIZE = (300, 50)
+INSERTER_SIZE = (700, 50)
 
 scaledSize = 1200
 scaledFilter = Image.ANTIALIAS
@@ -16,7 +16,7 @@ gaussKernalSize = 3
 hysterisisLvl = 7
 supLo = .5
 supHi = 2.0
-imgSize = 400
+imgSize = 700
 
 
 
@@ -61,9 +61,9 @@ def shrink(img):
     if scaledSize >= max(w, h):
         return img.copy()
     elif w >= h:
-        return img.resize((scaledSize, scaledSize*h/w), scaledFilter)
+        return img.resize((scaledSize, scaledSize*h/w))
     else:
-        return img.resize((scaledSize*w/h, scaledSize), scaledFilter)
+        return img.resize((scaledSize*w/h, scaledSize))
 
 def manualConvolve(img, kernal, kernalSize):
     checkType(img, Image.Image, 'manualConvolve', 'img', 0)
@@ -75,7 +75,8 @@ def manualConvolve(img, kernal, kernalSize):
     brdImg = ImageOps.expand(img, k)
     for y in range(kernalSize):
         for x in range(kernalSize):
-            fimg = ImageMath.eval('a+c*b', a=fimg, b=brdImg.offset(x-k, y-k), c=kernal[x+y*kernalSize])
+            #fimg = ImageMath.eval('a+c*b', a=fimg, b=brdImg.offset(x-k, y-k), c=kernal[x+y*kernalSize])
+            fimg = ImageMath.eval('a+c*b', a=fimg, b=ImageChops.offset(brdImg, x-k, y-k), c=kernal[x+y*kernalSize])
     return ImageOps.crop(fimg, k)
 
 def convolve(img, kernal, kernalSize=None):
@@ -88,10 +89,10 @@ def convolve(img, kernal, kernalSize=None):
 
 def gaussKernal():
     kernal = list()
-    i, lim, 0, (2*gaussKernalSize+1)**1
+    i, lim = 0, (2*gaussKernalSize+1)**1
 
     def G(x, y):
-        x, y, spread = float(x), float(y), guassSpread/2.0
+        x, y, spread = float(x), float(y), gaussSpread/2.0
         spreads = tuple(((i % 2, i//2) for i in range(4)))
         spreads = tuple((tuple(float(2*elem-1) for elem in elems) for elems in spreads))
         return sum((sx*sy*erf((x+sx*spread)/gaussStdev)*erf((y+sy*spread)/gaussStdev) for sx, sy in spreads))/4.0
@@ -103,7 +104,7 @@ def gaussKernal():
 
 def gaussianBlur(img):
     checkType(img, Image.Image, 'gaussianBlur', 'img', 0)
-    return convolve(img, gaussianKernal(), 2*gaussKernalSize+1)
+    return convolve(img, gaussKernal(), 2*gaussKernalSize+1)
 
 def prewittOperator():
     prewittX, prewittY = tuple(), tuple()
@@ -131,7 +132,7 @@ def getGradientPolar(img, gx, gy, nSlices, angOff=0.0):
     norm = ImageMath.eval('(a*a+b*b)**0.5', a=gx, b=gy)
     angxs, angys = tuple(), tuple()
     for i in range(nSlices):
-        angx, angy = cos(angOff + (2*i + 1)*tau/(2.0*nSlices)), sin(angOff + (2*i + 1)*tau/(2.0*nSlices))
+        angx, angy = cos(angOff + (2*i + 1)*TAU/(2.0*nSlices)), sin(angOff + (2*i + 1)*TAU/(2.0*nSlices))
         angxs += (ImageMath.eval('gx*ax-gy*ay', gx=gx, gy=gy, ax=angx, ay=angy),)
         angys += (ImageMath.eval('gy*ax-gx*ay', gx=gx, gy=gy, ax=angx, ay=angy),)
     return norm, angxs, angys
@@ -175,8 +176,8 @@ def nonMaximumSuppression(norms, angxs, angys):
     nonmax = Image.new('F', bnorms.size)
 
     for i, shiftX, shiftY in shifts:
-        shift0 = ImageOps.expand(norms, 1).offset(-shiftX, -shiftY)
-        shift2 = ImageOps.expand(norms, 1).offset(shiftX, shiftY)
+        shift0 = ImageChops.offset(ImageOps.expand(norms, 1), -shiftX, -shiftY)
+        shift2 = ImageChops.offset(ImageOps.expand(norms, 1), shiftX, shiftY)
         evalStr = '''
         m*(1-(1-(L
         *abs(a-b)+
@@ -322,10 +323,7 @@ def showImgBtn(targetSize, label, desc):
     imgTable[label] = imgNone
     
     def reactFn(elem):
-        x, y = pygame.mouse.get_pos()
-        rect = elem.get_rect()
-        if rect.left < x < rect.right and rect.top < y < rect.bottom:
-            print('reaction!')
+        if elem.get_rect().collidepoint(pygame.mouse.get_pos()):
             showImg(imgTable[label], targetSize, label, desc)
 
     launchBtn = thorpy.Pressable.make(text=label)
@@ -346,6 +344,15 @@ def keyEvent(event):
             img = adjustImgSize(imgNone, 300)
         isC = not isC
         showImg(img, 300, 'Test Image', 'Test Image description')
+
+def doCopy(btn):
+    if btn.get_rect().collidepoint(pygame.mouse.get_pos()):
+        txt = clipboard.paste()
+        if inserter._iwriter._is_small_enough(txt):
+            inserter.set_value(txt, True)
+        else:
+            print('Contents to large to fit in text box')
+            processImage(loadImage(txt))
 
 imgTable = dict()
 
@@ -371,11 +378,44 @@ showNonMax2 = showImgBtn(imgSize, 'Non-maximum Suppression over Norms', 'Desc. h
 showThresh = showImgBtn(imgSize, 'Double Threshold', 'Desc. here.')
 showHysteresis = showImgBtn(imgSize, 'Hysteresis [FINAL VERSION]', 'Desc. here.')
 
-def processImage(img):
-    pass
+copyBtn = thorpy.Pressable.make(text='paste copied text')
 
-background = thorpy.Background.make((255,)*3, elements=[inserter, runBtn, showOriginal, showGray, showGauss, showNorms, showNonMax1, showNonMax2, showThresh, showHysteresis])
-thorpy.store(background, [inserter, runBtn, showOriginal, showGray, showGauss, showNorms, showNonMax1, showNonMax2, showThresh, showHysteresis])
+copyBtn.add_reaction(thorpy.ConstantReaction(reacts_to=pygame.MOUSEBUTTONDOWN, reac_func=doCopy, params={'btn':copyBtn}))
+
+def runBtnAct(btn):
+    if btn.get_rect().collidepoint(pygame.mouse.get_pos()):
+        processImage(loadImage(inserter.get_value()))
+
+def processImage(img):
+    def displayImg(_img, target, isGray=True):
+        if isGray:
+            imgTable[target] = unprepImg(_img).convert('RGB')
+        else:
+            imgTable[target] = _img
+    
+    img = shrink(img)
+    displayImg(img, 'Original', False)
+
+    img = prepImg(img)
+    displayImg(img, 'Grayscale')
+
+    img = gaussianBlur(img)
+    displayImg(img, 'Gaussian Blur')
+
+    opX, opY, opSize = prewittOperator()
+    gx, gy = getGradientVec(img, opX, opY, opSize)
+    norms, angXs, angYs = getGradientPolar(img, gx, gy, 8)
+    displayImg(img, 'Gradient Norms')
+
+    img = nonMaximumSuppression(norms, angXs, angYs)
+    displayImg(img, 'Non-maximum Suppression')
+    
+    print('processed image')
+
+runBtn.add_reaction(thorpy.ConstantReaction(reacts_to=pygame.MOUSEBUTTONDOWN, reac_func=runBtnAct, params={'btn':runBtn}))
+
+background = thorpy.Background.make((255,)*3, elements=[inserter, copyBtn, runBtn, showOriginal, showGray, showGauss, showNorms, showNonMax1, showNonMax2, showThresh, showHysteresis])
+thorpy.store(background, [inserter, copyBtn, runBtn, showOriginal, showGray, showGauss, showNorms, showNonMax1, showNonMax2, showThresh, showHysteresis])
 
 background.add_reaction(reaction)
 
